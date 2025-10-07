@@ -35,8 +35,8 @@
   </style>
 </head>
 <body>
-  <h1>日本住所ジオコーダー（OSM Nominatim）</h1>
-  <p>都道府県の抽出と、任意名称の手入力にも対応しています。</p>
+  <h1>日本住所ジオコーダー（都道府県取得 修正版）</h1>
+  <p>住所検索でも reverse API を併用して、都道府県を確実に取得します。</p>
 
   <div class="row">
     <input id="q" placeholder="例：東京都千代田区神田須田町1-4-8" />
@@ -82,7 +82,7 @@
     const tbody = document.querySelector('#historyTable tbody');
     const selectAllCheckbox = document.getElementById('selectAll');
 
-    // 住所→座標
+    // 住所→座標 → reverse で都道府県取得
     async function search() {
       const query = document.getElementById('q').value.trim();
       const out = document.getElementById('out');
@@ -90,27 +90,28 @@
 
       out.textContent = "検索中…（Nominatim）";
 
-      const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&accept-language=ja&q=${encodeURIComponent(query)}`;
-      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-      const json = await res.json();
+      const searchUrl = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&accept-language=ja&q=${encodeURIComponent(query)}`;
+      const sres = await fetch(searchUrl, { headers: { 'Accept': 'application/json' } });
+      const sjson = await sres.json();
 
-      if (!Array.isArray(json) || json.length === 0) {
+      if (!Array.isArray(sjson) || sjson.length === 0) {
         out.textContent = `見つかりませんでした: 「${query}」`;
         return;
       }
 
-      const top = json[0];
+      const top = sjson[0];
       const lat = parseFloat(top.lat);
       const lon = parseFloat(top.lon);
-      const address = top.display_name;
-      const prefecture = extractPrefecture(top.address);
+
+      // reverse で都道府県情報を補完
+      const prefecture = await getPrefectureFromReverse(lat, lon);
 
       out.textContent = JSON.stringify({
         入力: query,
         都道府県: prefecture,
         緯度: lat,
         経度: lon,
-        住所: address,
+        住所: top.display_name,
         種類: `${top.class}/${top.type}`
       }, null, 2);
 
@@ -121,12 +122,20 @@
         prefecture,
         lat,
         lon,
-        address,
+        address: top.display_name,
         type: `${top.class}/${top.type}`
       });
     }
 
-    // 座標→住所
+    // reverse → 都道府県抽出
+    async function getPrefectureFromReverse(lat, lon) {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=json&accept-language=ja&lat=${lat}&lon=${lon}&addressdetails=1`;
+      const res = await fetch(url);
+      const json = await res.json();
+      return extractPrefecture(json.address || {});
+    }
+
+    // 地図クリック → reverse で都道府県取得
     async function reverseGeocode(lat, lon) {
       const out = document.getElementById('out');
       out.textContent = `座標検索中… (${lat}, ${lon})`;
@@ -163,7 +172,6 @@
     }
 
     function extractPrefecture(addressObj) {
-      // Nominatimのaddressには都道府県に相当する情報が state / province / region に入っている
       return addressObj?.state || addressObj?.province || addressObj?.region || "";
     }
 
