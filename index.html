@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>日本住所ジオコーダー</title>
+  <title>日本住所ジオコーダー（都道府県抽出・CSV対応）</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     body {
@@ -35,8 +35,8 @@
   </style>
 </head>
 <body>
-  <h1>日本住所ジオコーダー（都道府県取得 修正版）</h1>
-  <p>住所検索でも reverse API を併用して、都道府県を確実に取得します。</p>
+  <h1>日本住所ジオコーダー</h1>
+  <p>住所・座標検索、都道府県抽出（display_name 右から3つ目）、名称編集、履歴削除、CSV出力に対応しています。</p>
 
   <div class="row">
     <input id="q" placeholder="例：東京都千代田区神田須田町1-4-8" />
@@ -82,7 +82,15 @@
     const tbody = document.querySelector('#historyTable tbody');
     const selectAllCheckbox = document.getElementById('selectAll');
 
-    // 住所→座標 → reverse で都道府県取得
+    // ▼ 都道府県抽出ロジック（display_name の右から3番目）
+    function extractPrefectureFromDisplayName(displayName) {
+      if (!displayName) return "";
+      const parts = displayName.split(",").map(s => s.trim());
+      if (parts.length < 3) return "";
+      return parts[parts.length - 3] || "";
+    }
+
+    // ▼ 住所→座標検索
     async function search() {
       const query = document.getElementById('q').value.trim();
       const out = document.getElementById('out');
@@ -102,9 +110,7 @@
       const top = sjson[0];
       const lat = parseFloat(top.lat);
       const lon = parseFloat(top.lon);
-
-      // reverse で都道府県情報を補完
-      const prefecture = await getPrefectureFromReverse(lat, lon);
+      const prefecture = extractPrefectureFromDisplayName(top.display_name);
 
       out.textContent = JSON.stringify({
         入力: query,
@@ -127,15 +133,7 @@
       });
     }
 
-    // reverse → 都道府県抽出
-    async function getPrefectureFromReverse(lat, lon) {
-      const url = `https://nominatim.openstreetmap.org/reverse?format=json&accept-language=ja&lat=${lat}&lon=${lon}&addressdetails=1`;
-      const res = await fetch(url);
-      const json = await res.json();
-      return extractPrefecture(json.address || {});
-    }
-
-    // 地図クリック → reverse で都道府県取得
+    // ▼ 逆ジオコーディング（地図クリック）
     async function reverseGeocode(lat, lon) {
       const out = document.getElementById('out');
       out.textContent = `座標検索中… (${lat}, ${lon})`;
@@ -150,7 +148,7 @@
       }
 
       const address = json.display_name;
-      const prefecture = extractPrefecture(json.address);
+      const prefecture = extractPrefectureFromDisplayName(address);
 
       out.textContent = JSON.stringify({
         緯度: lat,
@@ -171,16 +169,14 @@
       });
     }
 
-    function extractPrefecture(addressObj) {
-      return addressObj?.state || addressObj?.province || addressObj?.region || "";
-    }
-
+    // ▼ マーカー表示
     function placeMarker(lat, lon) {
       if (marker) marker.remove();
       marker = L.marker([lat, lon]).addTo(map);
       map.setView([lat, lon], 17);
     }
 
+    // ▼ 履歴操作
     function addHistory({name, input, prefecture, lat, lon, address, type}) {
       const record = {
         id: crypto.randomUUID(),
@@ -243,6 +239,7 @@
       history.forEach(r => appendHistoryRow(r));
     }
 
+    // ▼ CSV 出力
     function downloadCSV() {
       if (history.length === 0) return alert('履歴がありません');
 
@@ -263,6 +260,7 @@
       URL.revokeObjectURL(url);
     }
 
+    // ▼ イベント登録
     selectAllCheckbox.addEventListener('change', () => {
       const checked = selectAllCheckbox.checked;
       tbody.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = checked);
