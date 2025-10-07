@@ -16,17 +16,27 @@
     .row input { flex: 1; padding: 8px; font-size: 16px; }
     .row button { padding: 8px 16px; font-size: 16px; }
     pre { background: #f8f8f8; padding: 12px; border-radius: 8px; margin-top: 16px; white-space: pre-wrap; }
-    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-    th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; font-size: 14px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+    th, td { border: 1px solid #ccc; padding: 4px 6px; text-align: left; }
     th { background: #f0f0f0; }
     td.checkbox-cell, th.checkbox-cell { text-align: center; width: 32px; }
-    #downloadBtn, #deleteBtn { margin-top: 8px; }
+    input.name-input {
+      width: 100%;
+      border: none;
+      background: transparent;
+      font-size: 13px;
+      padding: 2px;
+    }
+    input.name-input:focus {
+      outline: 1px solid #888;
+      background: #fff;
+    }
     #buttonRow { display: flex; gap: 8px; margin-top: 8px; }
   </style>
 </head>
 <body>
   <h1>日本住所ジオコーダー（OSM Nominatim）</h1>
-  <p>住所 ↔ 座標検索、履歴の選択削除、CSV出力ができます。</p>
+  <p>都道府県の抽出と、任意名称の手入力にも対応しています。</p>
 
   <div class="row">
     <input id="q" placeholder="例：東京都千代田区神田須田町1-4-8" />
@@ -42,7 +52,9 @@
       <tr>
         <th class="checkbox-cell"><input type="checkbox" id="selectAll"></th>
         <th>#</th>
+        <th>名称</th>
         <th>入力住所</th>
+        <th>都道府県</th>
         <th>緯度</th>
         <th>経度</th>
         <th>住所（display_name）</th>
@@ -91,9 +103,11 @@
       const lat = parseFloat(top.lat);
       const lon = parseFloat(top.lon);
       const address = top.display_name;
+      const prefecture = extractPrefecture(top.address);
 
       out.textContent = JSON.stringify({
         入力: query,
+        都道府県: prefecture,
         緯度: lat,
         経度: lon,
         住所: address,
@@ -101,15 +115,23 @@
       }, null, 2);
 
       placeMarker(lat, lon);
-      addHistory({ input: query, lat, lon, address, type: `${top.class}/${top.type}` });
+      addHistory({
+        name: "",
+        input: query,
+        prefecture,
+        lat,
+        lon,
+        address,
+        type: `${top.class}/${top.type}`
+      });
     }
 
-    // 座標→住所（逆ジオ）
+    // 座標→住所
     async function reverseGeocode(lat, lon) {
       const out = document.getElementById('out');
       out.textContent = `座標検索中… (${lat}, ${lon})`;
 
-      const url = `https://nominatim.openstreetmap.org/reverse?format=json&accept-language=ja&lat=${lat}&lon=${lon}`;
+      const url = `https://nominatim.openstreetmap.org/reverse?format=json&accept-language=ja&lat=${lat}&lon=${lon}&addressdetails=1`;
       const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
       const json = await res.json();
 
@@ -119,15 +141,30 @@
       }
 
       const address = json.display_name;
+      const prefecture = extractPrefecture(json.address);
 
       out.textContent = JSON.stringify({
         緯度: lat,
         経度: lon,
+        都道府県: prefecture,
         住所: address
       }, null, 2);
 
       placeMarker(lat, lon);
-      addHistory({ input: "(地図クリック)", lat, lon, address, type: "reverse" });
+      addHistory({
+        name: "",
+        input: "(地図クリック)",
+        prefecture,
+        lat,
+        lon,
+        address,
+        type: "reverse"
+      });
+    }
+
+    function extractPrefecture(addressObj) {
+      // Nominatimのaddressには都道府県に相当する情報が state / province / region に入っている
+      return addressObj?.state || addressObj?.province || addressObj?.region || "";
     }
 
     function placeMarker(lat, lon) {
@@ -136,11 +173,17 @@
       map.setView([lat, lon], 17);
     }
 
-    function addHistory({input, lat, lon, address, type}) {
+    function addHistory({name, input, prefecture, lat, lon, address, type}) {
       const record = {
         id: crypto.randomUUID(),
         no: history.length + 1,
-        input, lat, lon, address, type
+        name,
+        input,
+        prefecture,
+        lat,
+        lon,
+        address,
+        type
       };
       history.push(record);
       appendHistoryRow(record);
@@ -152,16 +195,22 @@
       tr.innerHTML = `
         <td class="checkbox-cell"><input type="checkbox" class="row-checkbox"></td>
         <td>${r.no}</td>
+        <td><input type="text" class="name-input" value="${r.name}" /></td>
         <td>${r.input}</td>
+        <td>${r.prefecture}</td>
         <td>${r.lat}</td>
         <td>${r.lon}</td>
         <td>${r.address}</td>
         <td>${r.type}</td>
       `;
+      const nameInput = tr.querySelector('.name-input');
+      nameInput.addEventListener('input', () => {
+        const rec = history.find(h => h.id === r.id);
+        if (rec) rec.name = nameInput.value;
+      });
       tbody.appendChild(tr);
     }
 
-    // 選択行削除
     function deleteSelectedRows() {
       const checkboxes = tbody.querySelectorAll('.row-checkbox:checked');
       if (checkboxes.length === 0) {
@@ -176,10 +225,7 @@
         tr.remove();
       });
 
-      // 履歴からも削除
       history = history.filter(r => !idsToDelete.includes(r.id));
-
-      // Noを振り直す
       history.forEach((r, i) => r.no = i + 1);
       renderHistoryTable();
     }
@@ -189,12 +235,13 @@
       history.forEach(r => appendHistoryRow(r));
     }
 
-    // CSV ダウンロード
     function downloadCSV() {
       if (history.length === 0) return alert('履歴がありません');
 
-      const header = ["No","入力住所","緯度","経度","住所","種類"];
-      const rows = history.map(r => [r.no, r.input, r.lat, r.lon, r.address, r.type]);
+      const header = ["No","名称","入力住所","都道府県","緯度","経度","住所","種類"];
+      const rows = history.map(r => [
+        r.no, r.name, r.input, r.prefecture, r.lat, r.lon, r.address, r.type
+      ]);
       const csv = [header, ...rows].map(row =>
         row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
       ).join("\r\n");
@@ -208,15 +255,11 @@
       URL.revokeObjectURL(url);
     }
 
-    // 全選択チェックボックス
     selectAllCheckbox.addEventListener('change', () => {
       const checked = selectAllCheckbox.checked;
-      tbody.querySelectorAll('.row-checkbox').forEach(cb => {
-        cb.checked = checked;
-      });
+      tbody.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = checked);
     });
 
-    // イベント登録
     document.getElementById('btn').onclick = search;
     document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
     document.getElementById('downloadBtn').onclick = downloadCSV;
