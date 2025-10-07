@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>日本住所ジオコーダー（Nominatim + 履歴 + CSV + 逆ジオ対応）</title>
+  <title>日本住所ジオコーダー</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     body {
@@ -19,12 +19,14 @@
     table { width: 100%; border-collapse: collapse; margin-top: 16px; }
     th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; font-size: 14px; }
     th { background: #f0f0f0; }
-    #downloadBtn { margin-top: 8px; }
+    td.checkbox-cell, th.checkbox-cell { text-align: center; width: 32px; }
+    #downloadBtn, #deleteBtn { margin-top: 8px; }
+    #buttonRow { display: flex; gap: 8px; margin-top: 8px; }
   </style>
 </head>
 <body>
   <h1>日本住所ジオコーダー（OSM Nominatim）</h1>
-  <p>住所 → 座標、座標 → 住所 の両方に対応しています。</p>
+  <p>住所 ↔ 座標検索、履歴の選択削除、CSV出力ができます。</p>
 
   <div class="row">
     <input id="q" placeholder="例：東京都千代田区神田須田町1-4-8" />
@@ -38,6 +40,7 @@
   <table id="historyTable">
     <thead>
       <tr>
+        <th class="checkbox-cell"><input type="checkbox" id="selectAll"></th>
         <th>#</th>
         <th>入力住所</th>
         <th>緯度</th>
@@ -49,7 +52,10 @@
     <tbody></tbody>
   </table>
 
-  <button id="downloadBtn">CSVダウンロード</button>
+  <div id="buttonRow">
+    <button id="deleteBtn">選択行を削除</button>
+    <button id="downloadBtn">CSVダウンロード</button>
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
@@ -60,8 +66,9 @@
     }).addTo(map);
 
     let marker;
-    const history = [];
+    let history = [];
     const tbody = document.querySelector('#historyTable tbody');
+    const selectAllCheckbox = document.getElementById('selectAll');
 
     // 住所→座標
     async function search() {
@@ -97,7 +104,7 @@
       addHistory({ input: query, lat, lon, address, type: `${top.class}/${top.type}` });
     }
 
-    // 座標→住所（逆ジオコーディング）
+    // 座標→住所（逆ジオ）
     async function reverseGeocode(lat, lon) {
       const out = document.getElementById('out');
       out.textContent = `座標検索中… (${lat}, ${lon})`;
@@ -123,16 +130,15 @@
       addHistory({ input: "(地図クリック)", lat, lon, address, type: "reverse" });
     }
 
-    // マーカー設置
     function placeMarker(lat, lon) {
       if (marker) marker.remove();
       marker = L.marker([lat, lon]).addTo(map);
       map.setView([lat, lon], 17);
     }
 
-    // 履歴追加
     function addHistory({input, lat, lon, address, type}) {
       const record = {
+        id: crypto.randomUUID(),
         no: history.length + 1,
         input, lat, lon, address, type
       };
@@ -142,7 +148,9 @@
 
     function appendHistoryRow(r) {
       const tr = document.createElement('tr');
+      tr.dataset.id = r.id;
       tr.innerHTML = `
+        <td class="checkbox-cell"><input type="checkbox" class="row-checkbox"></td>
         <td>${r.no}</td>
         <td>${r.input}</td>
         <td>${r.lat}</td>
@@ -151,6 +159,34 @@
         <td>${r.type}</td>
       `;
       tbody.appendChild(tr);
+    }
+
+    // 選択行削除
+    function deleteSelectedRows() {
+      const checkboxes = tbody.querySelectorAll('.row-checkbox:checked');
+      if (checkboxes.length === 0) {
+        alert('削除する行を選択してください');
+        return;
+      }
+
+      const idsToDelete = [];
+      checkboxes.forEach(cb => {
+        const tr = cb.closest('tr');
+        idsToDelete.push(tr.dataset.id);
+        tr.remove();
+      });
+
+      // 履歴からも削除
+      history = history.filter(r => !idsToDelete.includes(r.id));
+
+      // Noを振り直す
+      history.forEach((r, i) => r.no = i + 1);
+      renderHistoryTable();
+    }
+
+    function renderHistoryTable() {
+      tbody.innerHTML = "";
+      history.forEach(r => appendHistoryRow(r));
     }
 
     // CSV ダウンロード
@@ -172,17 +208,20 @@
       URL.revokeObjectURL(url);
     }
 
-    // イベント
-    document.getElementById('btn').onclick = search;
-    document.getElementById('q').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') search();
+    // 全選択チェックボックス
+    selectAllCheckbox.addEventListener('change', () => {
+      const checked = selectAllCheckbox.checked;
+      tbody.querySelectorAll('.row-checkbox').forEach(cb => {
+        cb.checked = checked;
+      });
     });
-    document.getElementById('downloadBtn').onclick = downloadCSV;
 
-    // 地図クリック → 逆ジオ
-    map.on('click', e => {
-      reverseGeocode(e.latlng.lat, e.latlng.lng);
-    });
+    // イベント登録
+    document.getElementById('btn').onclick = search;
+    document.getElementById('q').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+    document.getElementById('downloadBtn').onclick = downloadCSV;
+    document.getElementById('deleteBtn').onclick = deleteSelectedRows;
+    map.on('click', e => reverseGeocode(e.latlng.lat, e.latlng.lng));
   </script>
 </body>
 </html>
