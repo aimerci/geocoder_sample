@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>日本住所ジオコーダー（Nominatim）</title>
+  <title>日本住所ジオコーダー（Nominatim + 履歴＋CSV）</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     body {
@@ -16,11 +16,15 @@
     .row input { flex: 1; padding: 8px; font-size: 16px; }
     .row button { padding: 8px 16px; font-size: 16px; }
     pre { background: #f8f8f8; padding: 12px; border-radius: 8px; margin-top: 16px; white-space: pre-wrap; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; font-size: 14px; }
+    th { background: #f0f0f0; }
+    #downloadBtn { margin-top: 8px; }
   </style>
 </head>
 <body>
   <h1>日本住所ジオコーダー（OSM Nominatim）</h1>
-  <p>地名・住所を入力すると、<a href="https://nominatim.org/" target="_blank">OpenStreetMap Nominatim</a> を使って緯度経度を返します。</p>
+  <p>住所を入力すると <a href="https://nominatim.org/" target="_blank">Nominatim</a> で緯度経度を取得し、履歴にも記録できます。</p>
 
   <div class="row">
     <input id="q" placeholder="例：東京都千代田区神田須田町1-4-8" />
@@ -29,6 +33,23 @@
 
   <pre id="out"></pre>
   <div id="map"></div>
+
+  <h2>検索履歴</h2>
+  <table id="historyTable">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>入力住所</th>
+        <th>表示名</th>
+        <th>緯度</th>
+        <th>経度</th>
+        <th>種類</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <button id="downloadBtn">CSVダウンロード</button>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
@@ -39,6 +60,8 @@
     }).addTo(map);
 
     let marker;
+    const history = [];
+    const tbody = document.querySelector('#historyTable tbody');
 
     async function search() {
       const query = document.getElementById('q').value.trim();
@@ -47,14 +70,8 @@
 
       out.textContent = "検索中…（Nominatim）";
 
-      // 公共APIのためレート制限あり：連続アクセスに注意！
       const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&accept-language=ja&q=${encodeURIComponent(query)}`;
-      const res = await fetch(url, {
-        headers: {
-          'Accept': 'application/json',
-          // 推奨：User-Agent or Referer を適切に設定（GitHub Pages の URLがRefererになる）
-        }
-      });
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
       const json = await res.json();
 
       if (!Array.isArray(json) || json.length === 0) {
@@ -63,25 +80,72 @@
       }
 
       const top = json[0];
+      const lat = parseFloat(top.lat);
+      const lon = parseFloat(top.lon);
+
       out.textContent = JSON.stringify({
         入力: query,
         表示名: top.display_name,
-        緯度: top.lat,
-        経度: top.lon,
+        緯度: lat,
+        経度: lon,
         種類: `${top.class}/${top.type}`
       }, null, 2);
 
-      const lat = parseFloat(top.lat);
-      const lon = parseFloat(top.lon);
       if (marker) marker.remove();
       marker = L.marker([lat, lon]).addTo(map);
       map.setView([lat, lon], 17);
+
+      // 履歴に追加
+      const record = {
+        no: history.length + 1,
+        input: query,
+        display_name: top.display_name,
+        lat: lat,
+        lon: lon,
+        type: `${top.class}/${top.type}`
+      };
+      history.push(record);
+      appendHistoryRow(record);
+    }
+
+    function appendHistoryRow(record) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${record.no}</td>
+        <td>${record.input}</td>
+        <td>${record.display_name}</td>
+        <td>${record.lat}</td>
+        <td>${record.lon}</td>
+        <td>${record.type}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    function downloadCSV() {
+      if (history.length === 0) return alert('履歴がありません');
+
+      const header = ["No","入力住所","表示名","緯度","経度","種類"];
+      const rows = history.map(r => [
+        r.no, r.input, r.display_name, r.lat, r.lon, r.type
+      ]);
+      const csv = [header, ...rows].map(row =>
+        row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
+      ).join("\r\n");
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `geocode_history_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
     }
 
     document.getElementById('btn').onclick = search;
     document.getElementById('q').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') search();
     });
+    document.getElementById('downloadBtn').onclick = downloadCSV;
   </script>
 </body>
 </html>
