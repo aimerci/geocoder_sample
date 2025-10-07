@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>日本住所ジオコーダー（Nominatim）</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, "ヒラギノ角ゴ ProN", "游ゴシック体", "Noto Sans JP", sans-serif;
+      margin: 24px;
+    }
+    h1 { font-size: 20px; }
+    #map { height: 360px; margin-top: 16px; border: 1px solid #ddd; border-radius: 8px; }
+    .row { display: flex; gap: 8px; margin-top: 8px; }
+    .row input { flex: 1; padding: 8px; font-size: 16px; }
+    .row button { padding: 8px 16px; font-size: 16px; }
+    pre { background: #f8f8f8; padding: 12px; border-radius: 8px; margin-top: 16px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>日本住所ジオコーダー（OSM Nominatim）</h1>
+  <p>地名・住所を入力すると、<a href="https://nominatim.org/" target="_blank">OpenStreetMap Nominatim</a> を使って緯度経度を返します。</p>
+
+  <div class="row">
+    <input id="q" placeholder="例：東京都千代田区神田須田町1-4-8" />
+    <button id="btn">検索</button>
+  </div>
+
+  <pre id="out"></pre>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map').setView([35.681236, 139.767125], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let marker;
+
+    async function search() {
+      const query = document.getElementById('q').value.trim();
+      const out = document.getElementById('out');
+      if (!query) return;
+
+      out.textContent = "検索中…（Nominatim）";
+
+      // 公共APIのためレート制限あり：連続アクセスに注意！
+      const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&accept-language=ja&q=${encodeURIComponent(query)}`;
+      const res = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          // 推奨：User-Agent or Referer を適切に設定（GitHub Pages の URLがRefererになる）
+        }
+      });
+      const json = await res.json();
+
+      if (!Array.isArray(json) || json.length === 0) {
+        out.textContent = `見つかりませんでした: 「${query}」`;
+        return;
+      }
+
+      const top = json[0];
+      out.textContent = JSON.stringify({
+        入力: query,
+        表示名: top.display_name,
+        緯度: top.lat,
+        経度: top.lon,
+        種類: `${top.class}/${top.type}`
+      }, null, 2);
+
+      const lat = parseFloat(top.lat);
+      const lon = parseFloat(top.lon);
+      if (marker) marker.remove();
+      marker = L.marker([lat, lon]).addTo(map);
+      map.setView([lat, lon], 17);
+    }
+
+    document.getElementById('btn').onclick = search;
+    document.getElementById('q').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') search();
+    });
+  </script>
+</body>
+</html>
