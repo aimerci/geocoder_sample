@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>日本住所ジオコーダー（Nominatim + 履歴＋CSV）</title>
+  <title>日本住所ジオコーダー（Nominatim + 履歴 + CSV + 逆ジオ対応）</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     body {
@@ -24,7 +24,7 @@
 </head>
 <body>
   <h1>日本住所ジオコーダー（OSM Nominatim）</h1>
-  <p>住所を入力すると <a href="https://nominatim.org/" target="_blank">Nominatim</a> で緯度経度を取得し、履歴にも記録できます。</p>
+  <p>住所 → 座標、座標 → 住所 の両方に対応しています。</p>
 
   <div class="row">
     <input id="q" placeholder="例：東京都千代田区神田須田町1-4-8" />
@@ -40,9 +40,9 @@
       <tr>
         <th>#</th>
         <th>入力住所</th>
-        <th>表示名</th>
         <th>緯度</th>
         <th>経度</th>
+        <th>住所（display_name）</th>
         <th>種類</th>
       </tr>
     </thead>
@@ -63,6 +63,7 @@
     const history = [];
     const tbody = document.querySelector('#historyTable tbody');
 
+    // 住所→座標
     async function search() {
       const query = document.getElementById('q').value.trim();
       const out = document.getElementById('out');
@@ -82,52 +83,82 @@
       const top = json[0];
       const lat = parseFloat(top.lat);
       const lon = parseFloat(top.lon);
+      const address = top.display_name;
 
       out.textContent = JSON.stringify({
         入力: query,
-        表示名: top.display_name,
         緯度: lat,
         経度: lon,
+        住所: address,
         種類: `${top.class}/${top.type}`
       }, null, 2);
 
+      placeMarker(lat, lon);
+      addHistory({ input: query, lat, lon, address, type: `${top.class}/${top.type}` });
+    }
+
+    // 座標→住所（逆ジオコーディング）
+    async function reverseGeocode(lat, lon) {
+      const out = document.getElementById('out');
+      out.textContent = `座標検索中… (${lat}, ${lon})`;
+
+      const url = `https://nominatim.openstreetmap.org/reverse?format=json&accept-language=ja&lat=${lat}&lon=${lon}`;
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      const json = await res.json();
+
+      if (!json || !json.display_name) {
+        out.textContent = `住所が見つかりませんでした (${lat}, ${lon})`;
+        return;
+      }
+
+      const address = json.display_name;
+
+      out.textContent = JSON.stringify({
+        緯度: lat,
+        経度: lon,
+        住所: address
+      }, null, 2);
+
+      placeMarker(lat, lon);
+      addHistory({ input: "(地図クリック)", lat, lon, address, type: "reverse" });
+    }
+
+    // マーカー設置
+    function placeMarker(lat, lon) {
       if (marker) marker.remove();
       marker = L.marker([lat, lon]).addTo(map);
       map.setView([lat, lon], 17);
+    }
 
-      // 履歴に追加
+    // 履歴追加
+    function addHistory({input, lat, lon, address, type}) {
       const record = {
         no: history.length + 1,
-        input: query,
-        display_name: top.display_name,
-        lat: lat,
-        lon: lon,
-        type: `${top.class}/${top.type}`
+        input, lat, lon, address, type
       };
       history.push(record);
       appendHistoryRow(record);
     }
 
-    function appendHistoryRow(record) {
+    function appendHistoryRow(r) {
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td>${record.no}</td>
-        <td>${record.input}</td>
-        <td>${record.display_name}</td>
-        <td>${record.lat}</td>
-        <td>${record.lon}</td>
-        <td>${record.type}</td>
+        <td>${r.no}</td>
+        <td>${r.input}</td>
+        <td>${r.lat}</td>
+        <td>${r.lon}</td>
+        <td>${r.address}</td>
+        <td>${r.type}</td>
       `;
       tbody.appendChild(tr);
     }
 
+    // CSV ダウンロード
     function downloadCSV() {
       if (history.length === 0) return alert('履歴がありません');
 
-      const header = ["No","入力住所","表示名","緯度","経度","種類"];
-      const rows = history.map(r => [
-        r.no, r.input, r.display_name, r.lat, r.lon, r.type
-      ]);
+      const header = ["No","入力住所","緯度","経度","住所","種類"];
+      const rows = history.map(r => [r.no, r.input, r.lat, r.lon, r.address, r.type]);
       const csv = [header, ...rows].map(row =>
         row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")
       ).join("\r\n");
@@ -141,11 +172,17 @@
       URL.revokeObjectURL(url);
     }
 
+    // イベント
     document.getElementById('btn').onclick = search;
     document.getElementById('q').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') search();
     });
     document.getElementById('downloadBtn').onclick = downloadCSV;
+
+    // 地図クリック → 逆ジオ
+    map.on('click', e => {
+      reverseGeocode(e.latlng.lat, e.latlng.lng);
+    });
   </script>
 </body>
 </html>
